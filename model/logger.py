@@ -1,7 +1,7 @@
 """
-logger.py — Structured event logging to SQLite (Stage 4)
-=========================================================
-Writes all detection / recognition events to a local SQLite database
+logger.py — Structured event logging to SQLite (Stages 4 & 5)
+==============================================================
+Writes all detection / recognition events and LLM narrations to a local SQLite database
 (events.db) with timestamps. This is the data source for the
 "twice-daily summary" feature in the next phase.
 
@@ -61,6 +61,10 @@ class EventLogger:
     def unknown_face(self):
         self._write("unknown_face")
 
+    def llm_narration(self, description: str):
+        """Store a scene description returned by the vision LLM (Stage 5)."""
+        self._write("llm_narration", extra=description)
+
     # ── Query helpers ─────────────────────────────────────
     def today_summary(self) -> dict:
         """Return a summary dict for today's events."""
@@ -82,6 +86,18 @@ class EventLogger:
         )
         cols = ["timestamp", "event_type", "person_id", "extra"]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def today_narrations(self) -> list:
+        """Return all LLM scene narrations logged today (for summary generation)."""
+        from datetime import date
+        today = date.today().isoformat()
+        cur = self._conn.execute(
+            "SELECT timestamp, extra FROM events "
+            "WHERE event_type='llm_narration' AND timestamp LIKE ? "
+            "ORDER BY id ASC",
+            (f"{today}%",),
+        )
+        return [{"timestamp": r[0], "extra": r[1]} for r in cur.fetchall()]
 
     def close(self):
         self._conn.close()

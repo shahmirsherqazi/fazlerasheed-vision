@@ -1,5 +1,15 @@
+# Core — required for all stages
 opencv-python>=4.8
 ultralytics>=8.0
+numpy>=1.24
+
+# Stage 3 — face recognition
 insightface>=0.7
 onnxruntime>=1.16
-numpy>=1.24
+
+# Stage 5 — vision LLM narration (install the one you use)
+# Google Gemini (recommended):
+google-generativeai>=0.5
+
+# OpenAI GPT-4o (alternative):
+# openai>=1.0
