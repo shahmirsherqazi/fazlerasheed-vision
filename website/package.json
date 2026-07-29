@@ -1,0 +1,17 @@
+{
+  "name": "fazlerasheed",
+  "version": "1.0.0",
+  "description": "Fazal-e-Rashid Vision Website",
+  "main": "frontend/index.html",
+  "scripts": {
+    "dev": "serve frontend",
+    "start": "serve frontend",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "serve": "^14.2.4"
+  }
+}

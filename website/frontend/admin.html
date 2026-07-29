@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin Portal — Fazal-e-Rashid Vision</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="stylesheet" href="css/admin.css" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════
+       1. LOGIN VIEW (Visible when NOT logged in)
+  ════════════════════════════════════════════════════════ -->
+  <div id="login-view" class="login-wrapper">
+    <div class="login-card">
+      <div class="login-card__logo">
+        <span class="login-card__badge">Admin Portal</span>
+        <h1 class="login-card__title">Fazal-e-Rashid Vision</h1>
+        <p class="login-card__sub">Sign in to manage customer inquiries</p>
+      </div>
+
+      <form id="admin-login-form" novalidate>
+        <div class="form-group">
+          <label class="form-label" for="login-email">Email Address</label>
+          <input 
+            type="email" 
+            id="login-email" 
+            class="form-input" 
+            placeholder="admin@fazlerasheed.com" 
+            required 
+            autocomplete="email" 
+          />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="login-password">Password</label>
+          <input 
+            type="password" 
+            id="login-password" 
+            class="form-input" 
+            placeholder="••••••••••••" 
+            required 
+            autocomplete="current-password" 
+          />
+        </div>
+
+        <button type="submit" id="login-btn" class="btn-primary">
+          Sign In
+        </button>
+
+        <div id="login-error" class="login-error" role="alert"></div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════
+       2. DASHBOARD VIEW (Visible ONLY when logged in)
+  ════════════════════════════════════════════════════════ -->
+  <div id="dashboard-view" class="admin-dashboard">
+    <!-- Header -->
+    <header class="admin-header">
+      <div class="admin-header__inner">
+        <div class="admin-brand">
+          <div class="admin-brand__logo">Fazal-e-Rashid Vision</div>
+          <span class="login-card__badge" style="margin:0;">Dashboard</span>
+        </div>
+        <div class="admin-user">
+          <span id="user-email-display" class="admin-user__email">admin@fazlerasheed.com</span>
+          <button id="logout-btn" class="btn-logout">Sign Out</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="admin-main">
+      <!-- Stats Grid -->
+      <section class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-card__label">Total Inquiries</div>
+          <div id="stat-total" class="stat-card__val">0</div>
+        </div>
+        <div class="stat-card stat-card--new">
+          <div class="stat-card__label">New / Pending</div>
+          <div id="stat-new" class="stat-card__val">0</div>
+        </div>
+        <div class="stat-card stat-card--replied">
+          <div class="stat-card__label">Replied</div>
+          <div id="stat-replied" class="stat-card__val">0</div>
+        </div>
+        <div class="stat-card stat-card--archived">
+          <div class="stat-card__label">Archived</div>
+          <div id="stat-archived" class="stat-card__val">0</div>
+        </div>
+      </section>
+
+      <!-- Toolbar -->
+      <section class="toolbar">
+        <div class="tabs">
+          <button class="tab-btn active" data-filter="all">All</button>
+          <button class="tab-btn" data-filter="new">New</button>
+          <button class="tab-btn" data-filter="replied">Replied</button>
+          <button class="tab-btn" data-filter="archived">Archived</button>
+        </div>
+        <div class="search-box">
+          <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <input type="text" id="search-input" class="search-input" placeholder="Search by name, email, or content…" />
+        </div>
+      </section>
+
+      <!-- Queries Table Container -->
+      <section class="queries-container">
+        <table class="query-table">
+          <thead>
+            <tr>
+              <th>Date / Time</th>
+              <th>Customer</th>
+              <th>Message Details</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="queries-tbody">
+            <!-- Dynamically populated -->
+          </tbody>
+        </table>
+        <div id="queries-empty" class="empty-state" style="display: none;">
+          <div class="empty-state__icon">📥</div>
+          <p>No contact inquiries found.</p>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Supabase Client & Logic -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/supabase-config.js"></script>
+  <script src="js/admin.js" defer></script>
+</body>
+</html>
