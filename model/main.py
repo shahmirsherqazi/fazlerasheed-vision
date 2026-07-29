@@ -68,6 +68,9 @@ class ThreadedReader:
             with self._lock:
                 self._ret   = ret
                 self._frame = frame
+            if not ret:
+                # Back off briefly so we don't spam the camera driver
+                time.sleep(0.005)
 
     def read(self):
         with self._lock:

@@ -24,9 +24,19 @@ class CameraSource:
             0          → default laptop webcam
             "rtsp://…" → IP / RTSP camera (next phase)
             "path.mp4" → video file for testing
+
+        On Windows the default MSMF backend can flood the log with
+        "can't grab frame" errors under load. We use DirectShow (CAP_DSHOW)
+        for webcam (int) sources, which is more stable. RTSP / file sources
+        use auto-detect as usual.
         """
         self.source = source
-        self._cap = cv2.VideoCapture(source)
+
+        import sys
+        if isinstance(source, int) and sys.platform == "win32":
+            self._cap = cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        else:
+            self._cap = cv2.VideoCapture(source)
 
         if not self._cap.isOpened():
             raise RuntimeError(

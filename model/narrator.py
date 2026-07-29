@@ -90,22 +90,52 @@ def _frame_to_b64_jpeg(frame: np.ndarray, quality: int = 70) -> str:
 
 # ── LLM clients ────────────────────────────────────────────
 
+# Try newer models first — fall back if one is unavailable in the region/tier
+_GEMINI_VISION_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash",
+]
+
+_GEMINI_TEXT_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash",
+]
+
+
+def _gemini_generate(model_names: list, contents) -> str:
+    """
+    Try each model in `model_names` in order until one succeeds.
+    Returns the text response or an error string.
+    """
+    import google.generativeai as genai
+    last_err = None
+    for model_name in model_names:
+        try:
+            model = genai.GenerativeModel(model_name)
+            response = model.generate_content(contents)
+            print(f"[Narrator] Used model: {model_name}")
+            return response.text.strip()
+        except Exception as e:
+            last_err = e
+            if "404" in str(e) or "not found" in str(e).lower():
+                continue   # try next model
+            break          # other errors — don't retry
+    return f"[Narrator] Gemini API error: {last_err}"
+
+
 def _call_gemini(b64_image: str) -> str:
-    """Send frame to Gemini 1.5 Flash vision API."""
+    """Send frame to Gemini vision API (tries newest available model first)."""
     try:
         import google.generativeai as genai
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        image_part = {
-            "mime_type": "image/jpeg",
-            "data": b64_image,
-        }
-        response = model.generate_content([SCENE_PROMPT, image_part])
-        return response.text.strip()
+        image_part = {"mime_type": "image/jpeg", "data": b64_image}
+        return _gemini_generate(_GEMINI_VISION_MODELS, [SCENE_PROMPT, image_part])
     except ImportError:
         return "[Narrator] google-generativeai not installed. Run: pip install google-generativeai"
-    except Exception as e:
-        return f"[Narrator] Gemini API error: {e}"
 
 
 def _call_openai(b64_image: str) -> str:
@@ -243,9 +273,7 @@ class Narrator:
             if LLM_PROVIDER == "gemini":
                 import google.generativeai as genai
                 genai.configure(api_key=GEMINI_API_KEY)
-                model = genai.GenerativeModel("gemini-1.5-flash")
-                response = model.generate_content(prompt)
-                summary = response.text.strip()
+                summary = _gemini_generate(_GEMINI_TEXT_MODELS, prompt)
             elif LLM_PROVIDER == "openai":
                 from openai import OpenAI
                 client = OpenAI(api_key=OPENAI_API_KEY)
