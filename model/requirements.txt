@@ -2,14 +2,15 @@
 opencv-python>=4.8
 ultralytics>=8.0
 numpy>=1.24
+python-dotenv>=1.0
 
 # Stage 3 — face recognition
 insightface>=0.7
 onnxruntime>=1.16
 
-# Stage 5 — vision LLM narration (install the one you use)
-# Google Gemini (recommended):
-google-generativeai>=0.5
+# Stage 5 — vision LLM narration
+# Azure OpenAI GPT-4o (primary, per the activity-tracker plan):
+openai>=1.0
 
-# OpenAI GPT-4o (alternative):
-# openai>=1.0
+# Google Gemini (alternative fallback):
+google-generativeai>=0.5

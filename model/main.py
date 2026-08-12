@@ -1,56 +1,59 @@
 """
-main.py — AI Camera Prototype (Stages 1–5)
-==========================================
+main.py — AI Camera Prototype (ByteTrack multi-person + Azure activity narration)
+==================================================================================
 Run this to start the live webcam pipeline.
 
   python main.py                    # default webcam (index 0)
   python main.py --source 1         # second webcam
-  python main.py --no-recognition   # YOLO only, skip face recognition
+  python main.py --no-recognition   # skip face recognition
   python main.py --no-narration     # disable Stage 5 (LLM narration)
 
 Enrol your face first:
   python recognizer.py --enroll YourName
 
-For Stage 5 (LLM scene narration), set one of these before running:
-  $env:LLM_PROVIDER = "gemini"        (PowerShell)
-  $env:GEMINI_API_KEY = "your-key"
-  -- or --
-  $env:LLM_PROVIDER = "openai"
-  $env:OPENAI_API_KEY = "your-key"
+Stage 5 — Azure OpenAI (primary, per the activity-tracker plan):
+  Fill in .env (in this directory) with:
+    AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT
+
+  -- or fall back to Gemini --
+  Set LLM_PROVIDER=gemini and GEMINI_API_KEY in .env
 
 Controls:
   Q — quit
   S — print today's event summary to console
-  N — force an immediate LLM narration (Stage 5)
-  R — generate and print end-of-shift summary (Stage 5)
+  N — force immediate narration for all visible persons
+  R — generate and print end-of-shift summary
+  A — show today's high-priority alerts
 """
 
+import os
 import argparse
 import time
 import threading
 import cv2
 
+# Load .env first — must happen before any module reads os.getenv()
+from dotenv import load_dotenv
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
+
 from capture    import CameraSource
-from detector   import PersonDetector
+from tracker    import PersonTracker
 from recognizer import FaceRecognizer
 from logger     import EventLogger
 from narrator   import Narrator
 
 
-# ── Performance tuning ────────────────────────────────────
-# Per the instructions: "downscale before inference, skip frames,
-# gate face recognition behind person detection"
-INFERENCE_WIDTH       = 640    # downscale frames to this width before detection
-                               # (keeps display at full resolution)
-DETECT_EVERY_N_FRAMES = 2      # run YOLO every N frames, display all frames
-RECOGNITION_EVERY_S   = 0.5    # face recognition max rate (seconds between runs)
+# ── Performance tuning ─────────────────────────────────────
+# ByteTrack runs on every frame — reduce scale if CPU is too slow.
+INFERENCE_WIDTH       = 640     # downscale to this width before track()
+RECOGNITION_EVERY_S   = 1.0     # face recognition max rate (seconds between runs)
 
 
-# ── Threaded frame reader ──────────────────────────────────
+# ── Threaded frame reader ───────────────────────────────────
 class ThreadedReader:
     """
     Reads frames from CameraSource in a background thread so slow inference
-    never blocks the capture. Implements the instruction's Step 4 fix.
+    never blocks the capture loop.
     """
 
     def __init__(self, cam: CameraSource):
@@ -69,7 +72,6 @@ class ThreadedReader:
                 self._ret   = ret
                 self._frame = frame
             if not ret:
-                # Back off briefly so we don't spam the camera driver
                 time.sleep(0.005)
 
     def read(self):
@@ -82,19 +84,17 @@ class ThreadedReader:
 
 def run(source=0, use_recognition=True, use_narration=True):
     log        = EventLogger()
-    detector   = PersonDetector()
+    tracker    = PersonTracker()
     recognizer = FaceRecognizer() if use_recognition else None
     narrator   = Narrator(log)   if use_narration   else None
 
-    last_recog_time  = 0.0
-    frame_counter    = 0
-    last_boxes       = []         # reuse last detection between YOLO frames
-    _seen_names: dict = {}        # rate-limit logging per person
+    last_recog_time = 0.0
+    _seen_names: dict = {}    # rate-limit face-recognition logging per person
 
     with CameraSource(source) as cam:
         reader = ThreadedReader(cam)
         print("\n[Main] Pipeline running.")
-        print("       Q=Quit  S=Summary  N=Narrate now  R=Shift report\n")
+        print("       Q=Quit  S=Summary  N=Narrate  R=Report  A=Alerts\n")
 
         while True:
             ret, frame = reader.read()
@@ -103,49 +103,41 @@ def run(source=0, use_recognition=True, use_narration=True):
                 continue
 
             now = time.time()
-            frame_counter += 1
 
-            # ── Stage 2: Person detection (every N frames) ──
-            # Downscale for inference, keep full-res frame for display
-            if frame_counter % DETECT_EVERY_N_FRAMES == 0:
-                h, w = frame.shape[:2]
-                scale = INFERENCE_WIDTH / w if w > INFERENCE_WIDTH else 1.0
-                small = cv2.resize(frame, (0, 0), fx=scale, fy=scale) if scale < 1 else frame
+            # ── Stage 2+3: Detection + ByteTrack tracking ──────────
+            # Downscale for inference, keep full-res for display
+            h, w = frame.shape[:2]
+            scale = INFERENCE_WIDTH / w if w > INFERENCE_WIDTH else 1.0
 
-                boxes_small, small = detector.detect(small)
-
-                # Scale boxes back to original resolution
-                if scale < 1:
-                    last_boxes = [
-                        (int(x1/scale), int(y1/scale),
-                         int(x2/scale), int(y2/scale), conf)
-                        for x1, y1, x2, y2, conf in boxes_small
-                    ]
-                    # Redraw boxes at full res
-                    for (x1, y1, x2, y2, conf) in last_boxes:
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 180, 255), 2)
-                        cv2.putText(frame, f"Person {conf:.0%}",
-                                    (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX,
-                                    0.55, (0, 180, 255), 2)
-                else:
-                    last_boxes = boxes_small
-                    frame = small
-
-                if last_boxes:
-                    log.person_detected(count=len(last_boxes))
-
+            if scale < 1.0:
+                small  = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
+                tracks_small = tracker.update(small)
+                # Scale track boxes back to full-res
+                for t in tracks_small:
+                    x1, y1, x2, y2 = t.box
+                    t.box = (
+                        int(x1 / scale), int(y1 / scale),
+                        int(x2 / scale), int(y2 / scale),
+                    )
+                tracks = tracks_small
+                # Redraw boxes on full-res frame (tracker annotated the small copy)
+                from tracker import _id_colour
+                for t in tracks:
+                    col = _id_colour(t.track_id)
+                    x1, y1, x2, y2 = t.box
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), col, 2)
+                    cv2.putText(frame, f"ID {t.track_id}  {t.conf:.0%}",
+                                (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
             else:
-                # Display only — redraw last known boxes without re-running YOLO
-                for (x1, y1, x2, y2, conf) in last_boxes:
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 180, 255), 2)
-                    cv2.putText(frame, f"Person {conf:.0%}",
-                                (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX,
-                                0.55, (0, 180, 255), 2)
+                tracks = tracker.update(frame)
 
-            # ── Stage 3: Face recognition ──────────────────
-            # Gate behind "a person was detected" (per instructions Step 3)
+            if tracks:
+                log.person_detected(count=len(tracks))
+
+            # ── Stage 4: Face recognition ───────────────────────────
+            # Gate behind person detection; run at limited rate
             if (use_recognition and recognizer is not None
-                    and last_boxes
+                    and tracks
                     and now - last_recog_time >= RECOGNITION_EVERY_S):
                 faces, frame = recognizer.identify(frame)
                 for f in faces:
@@ -158,18 +150,23 @@ def run(source=0, use_recognition=True, use_narration=True):
                         _seen_names[name] = now
                 last_recog_time = now
 
-            # ── Stage 5: Periodic narration ────────────────
-            if narrator is not None:
-                narrator.maybe_narrate(frame)
+            # ── Stage 5: Per-person activity narration ──────────────
+            if narrator is not None and tracks:
+                narrator.maybe_narrate(frame, tracks)
 
-            # ── Display ────────────────────────────────────
-            cv2.putText(frame, "Q=Quit  S=Summary  N=Narrate  R=Report",
+            # ── Overlay the latest activity label per visible ID ────
+            # (narrator runs async — we just show whatever was last logged)
+            # (no extra overlay needed — track boxes already have ID labels)
+
+            # ── Display ─────────────────────────────────────────────
+            cv2.putText(frame, "Q=Quit  S=Summary  N=Narrate  R=Report  A=Alerts",
                         (10, frame.shape[0] - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 180, 180), 1)
 
             cv2.imshow("Fazlerasheed Vision — Prototype", frame)
 
             key = cv2.waitKey(1) & 0xFF
+
             if key == ord("q"):
                 break
 
@@ -181,13 +178,25 @@ def run(source=0, use_recognition=True, use_narration=True):
                 print()
 
             elif key == ord("n") and narrator is not None:
-                narrator.maybe_narrate(frame, force=True)
+                if tracks:
+                    narrator.maybe_narrate(frame, tracks, force=True)
+                else:
+                    print("[Main] No tracked persons — nothing to narrate.")
 
             elif key == ord("r") and narrator is not None:
-                # Generate shift summary in a thread so UI doesn't freeze
                 threading.Thread(
                     target=narrator.generate_summary, daemon=True
                 ).start()
+
+            elif key == ord("a"):
+                alerts = log.today_high_priority()
+                if alerts:
+                    print(f"\n=== ⚠  High-Priority Alerts Today ({len(alerts)}) ===")
+                    for a in alerts:
+                        print(f"  {a['timestamp']}  {a['detail']}")
+                    print()
+                else:
+                    print("[Main] No high-priority alerts today.")
 
     reader.stop()
     cv2.destroyAllWindows()
@@ -195,7 +204,7 @@ def run(source=0, use_recognition=True, use_narration=True):
     print("[Main] Stopped.")
 
 
-# ── Entry point ───────────────────────────────────────────
+# ── Entry point ────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Fazlerasheed Vision — AI Camera Prototype"
@@ -206,7 +215,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--no-recognition", action="store_true",
-        help="Disable face recognition (run YOLO only)"
+        help="Disable face recognition (run YOLO+ByteTrack only)"
     )
     parser.add_argument(
         "--no-narration", action="store_true",
@@ -215,7 +224,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     run(
-        source=args.source,
-        use_recognition=not args.no_recognition,
-        use_narration=not args.no_narration,
+        source           = args.source,
+        use_recognition  = not args.no_recognition,
+        use_narration    = not args.no_narration,
     )
